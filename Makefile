@@ -28,8 +28,11 @@ OBJS := \
   $(OBJDIR)/multiboot.o \
   $(OBJDIR)/boot.o \
   $(OBJDIR)/isr_halt.o \
+  $(OBJDIR)/interrupts.o \
   $(OBJDIR)/kernel.o \
   $(OBJDIR)/idt.o \
+  $(OBJDIR)/isr.o \
+  $(OBJDIR)/irq.o \
   $(OBJDIR)/vga.o \
   $(OBJDIR)/pic.o
 
@@ -58,12 +61,22 @@ $(OBJDIR)/boot.o: boot/boot.s | dirs
 $(OBJDIR)/isr_halt.o: boot/isr_halt.s | dirs
 	$(AS) -f elf32 $< -o $@
 
+$(OBJDIR)/interrupts.o: boot/interrupts.s | dirs
+	$(AS) -f elf32 $< -o $@
+
+
 # C
 
 $(OBJDIR)/kernel.o: kernel/kernel.c include/vga.h include/idt.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/idt.o: kernel/idt.c include/idt.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/isr.o: kernel/isr.c include/isr.h include/vga.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/irq.o: kernel/irq.c include/irq.h include/isr.h include/pic.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/vga.o: drivers/vga.c include/vga.h | dirs
