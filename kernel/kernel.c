@@ -22,7 +22,9 @@
 #include "io.h"
 #include "cmos.h"
 #include "time.h"
+#include "memory.h"
 #include "keyboard.h"
+#include "sysconfig.h"
 
 #define MULTIBOOT_MAGIC 0x2BADB002u
 
@@ -51,13 +53,7 @@ static volatile uint32_t g_ticks = 0;
 
 static void timer_irq(regs_t *r) {
     (void)r;
-
-    time_tick();   // <<< ADICIONA ISSO
-
-    g_ticks++;
-    if ((g_ticks % 18u) == 0u) {
-        vga_putc('.');
-    }
+    time_tick();
 }
 
 static void keyboard_irq(regs_t *r) {
@@ -97,61 +93,78 @@ void kernel_main(uint32_t magic, uint32_t mb_info) {
     vga_write("\n\n");
 
     vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_write("[1] IDT... ");
+	vga_write("[1] Memory... ");
+	memory_init(magic, mb_info);   // use a assinatura do seu kernel novo
+	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+	vga_write(" [OK]\n");
+
+	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+	vga_write("[2] SysConfig... ");
+	sysconfig_init();
+	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+	vga_write(" [OK]\n");
+
+    vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_write("[3] IDT... ");
     idt_init();
 	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     vga_write(" [OK]\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_write("[2] PIC... ");
+    vga_write("[4] PIC... ");
     pic_init();
 	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     vga_write(" [OK]\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_write("[3] IRQ layer... ");
+    vga_write("[5] IRQ layer... ");
     irq_init();
 	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     vga_write(" [OK]\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-	vga_write("[4] CMOS... ");
+	vga_write("[6] CMOS... ");
 	rtc_time_t t;
 	cmos_read_rtc(&t);
 	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
 	vga_write(" [OK]\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-	vga_write("[5] TIME... ");
+	vga_write("[7] TIME... ");
 	time_init(18);
 	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
 	vga_write(" [OK]\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-	vga_write("[6] Basic Handlers... ");
+	vga_write("[8] Basic Handlers... ");
     irq_install_handler(0, timer_irq);     // IRQ0 = PIT
-    irq_install_handler(1, keyboard_irq);  // IRQ1 = PS/2
 	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
 	vga_write(" [OK]\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-	vga_write("[7] IRQ Unmasking... ");
+	vga_write("[9] IRQ Unmasking... ");
     pic_unmask_irq(0);
-    pic_unmask_irq(1);
 	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
 	vga_write(" [OK]\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_write("[8] STI (enable interrupts)... ");
+    vga_write("[10] STI (enable interrupts)... ");
     __asm__ volatile("sti");
+	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    vga_write(" [OK]\n");
+	
+	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    vga_write("[11] Keyboard... ");
+    keyboard_init();
 	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     vga_write(" [OK]\n\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vga_write("[9] Keyboard... ");
-    keyboard_init();
-	vga_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    vga_write(" [OK]\n");
+	vga_write("CPU:");
+	vga_write(sysconfig_cpu_str());
+	vga_write("\n");
+	vga_write(meminfo_str());
+	vga_write("\n\n");
 	
 	vga_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     vga_write("Cinser Kernel OK! ");

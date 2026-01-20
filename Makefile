@@ -36,6 +36,8 @@ OBJS := \
   $(OBJDIR)/vga.o \
   $(OBJDIR)/pic.o \
   $(OBJDIR)/cmos.o \
+  $(OBJDIR)/memory.o \
+  $(OBJDIR)/sysconfig.o \
   $(OBJDIR)/time.o \
   $(OBJDIR)/keyboard.o
 
@@ -91,11 +93,18 @@ $(OBJDIR)/pic.o: kernel/pic.c include/pic.h | dirs
 $(OBJDIR)/cmos.o: kernel/cmos.c include/cmos.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJDIR)/time.o: kernel/time.c include/time.h include/cmos.h include/irq.h | dirs
+$(OBJDIR)/memory.o: kernel/memory.c include/memory.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
-	
+
+$(OBJDIR)/sysconfig.o: kernel/sysconfig.c include/sysconfig.h include/memory.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(OBJDIR)/keyboard.o: drivers/keyboard.c include/keyboard.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/time.o: kernel/time.c include/time.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
 
 # Link
 
