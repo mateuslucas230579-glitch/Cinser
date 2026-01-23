@@ -31,6 +31,7 @@ static int starts_with(const char* s, const char* prefix) {
 
 static void put_prompt(void) {
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+	console_write(" \n");
     console_write("shice");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     console_write("> ");
@@ -142,7 +143,7 @@ static void cmd_clear(void) {
 }
 
 static void cmd_ver(void) {
-    console_write("Cinser 0.0.6 (Shice)\n");
+    console_write("Cinser 0.0.7 (Shice)\n");
     console_write("CPU: ");
     console_write(sysconfig_cpu_str());
     console_write("\n");
@@ -160,6 +161,7 @@ static void cmd_echo(const char* line) {
 
 static void shice_banner(void) {
     console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+	console_write(" \n");
     console_write("Tervia Cinser - Shice Shell\n");
     console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
     console_write("Digite 'help' para ver os comandos.\n\n");

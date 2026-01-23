@@ -150,7 +150,7 @@ void splash_show(uint32_t seconds) {
     }
 
     // --- Adição do Texto da Versão ---
-    const char* version_text = "Cinser Kernel v0.0.6";
+    const char* version_text = "Cinser Kernel v0.0.7";
     
     // Calcula o comprimento do texto
     int text_len = 0;
