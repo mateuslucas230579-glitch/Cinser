@@ -41,7 +41,10 @@ OBJS := \
   $(OBJDIR)/console.o \
   $(OBJDIR)/desktop.o \
   $(OBJDIR)/window.o \
-  $(OBJDIR)/shell.o
+  $(OBJDIR)/shell.o \
+  $(OBJDIR)/shice.o \
+  $(OBJDIR)/splash.o \
+  $(OBJDIR)/shice_help.o
 
 .PHONY: all iso run clean dirs check-tools
 
@@ -126,6 +129,15 @@ $(OBJDIR)/window.o: kernel/window.c include/window.h include/video.h include/fon
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJDIR)/shell.o: programs/shell.c include/programs/shell.h include/window.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/shice.o: programs/shice.c include/programs/shice.h include/console.h include/keyboard.h include/shice/shice_help.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/shice_help.o: shice/shice_help.c include/shice/shice_help.h include/console.h | dirs
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/splash.o: kernel/splash.c include/splash.h | dirs
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # --- Link ---

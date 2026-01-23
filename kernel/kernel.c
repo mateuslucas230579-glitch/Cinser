@@ -30,6 +30,8 @@
 #include "multiboot.h"
 #include "desktop.h"
 #include "mouse.h"
+#include "programs/shice.h"
+#include "splash.h"
 
 #define MULTIBOOT_MAGIC 0x2BADB002u
 
@@ -243,60 +245,14 @@ void kernel_main(uint32_t magic, uint32_t mb_info) {
     vga_write("Cinser Kernel OK! ");
     vga_write("(dots = timer, KBD shows scancode)\n\n");
 	
-	delay_time(5);
-	
-// ... código de inicialização anterior ...
 
-    desktop_init();
+    // Aguarda 5s apos o boot splash e entra direto no Shice (shell em modo console).
+    // A UI (desktop) ainda existe e pode ser acessada pelo comando 'ui' dentro do Shice.
+	delay_time(2);
+    splash_show(5);
+	console_clear();
+    shice_run();
 
-    int need_redraw = 1;
-    uint32_t last_frame_time = 0; // Controle de FPS
-
-    for (;;) {
-        // HLT economiza CPU e espera a próxima interrupção (Timer ou Teclado)
-        __asm__ volatile("hlt");
-
-        // 1. Processa TODAS as teclas pendentes antes de desenhar
-        // Isso evita desenhar 10 vezes se 10 teclas chegaram juntas
-        if (keyboard_haschar()) {
-            while (keyboard_haschar()) {
-                int ch = keyboard_getchar();
-                if (ch > 0) {
-                    desktop_key((char)ch);
-                    need_redraw = 1; 
-                }
-            }
-        }
-        
-        // 2. Desenha (Com Limitador de 60 FPS)
-        if (need_redraw) {
-            uint32_t now = time_get_ticks();
-            
-            // 1000ms / 60fps ≈ 16ms por frame
-            // Se passou menos de 16ms desde o último desenho, PULA.
-            // Isso evita sobrecarregar o barramento de vídeo à toa.
-            if ((now - last_frame_time) < 16) {
-                continue; 
-            }
-            
-            // Marca o tempo deste frame
-            last_frame_time = now;
-
-            // --- INÍCIO DO DESENHO ---
-            
-            // A. Desenha na RAM (Backbuffer)
-            desktop_draw();
-            
-            // B. Sincronia Fina com o Monitor (VSync)
-            wait_vsync();
-
-            // C. Copia para a Tela (VRAM) de forma Atômica
-            if (g_video_driver && g_video_driver->update) {
-                g_video_driver->update();
-            }
-            
-            need_redraw = 0;
-            // -------------------------
-        }
-    }
+    // shice_run() não retorna, mas por segurança:
+    for(;;) { __asm__ volatile("hlt"); }
 }

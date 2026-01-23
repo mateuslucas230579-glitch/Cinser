@@ -44,6 +44,11 @@ int time_has_update(void);
 // Marca a atualizacao como consumida.
 void time_consume_update(void);
 
+// Retorna o numero de ticks desde o boot.
+// O tick e incrementado pelo IRQ0 (PIT) em time_tick().
+// Se time_init(1000) for usado, 1 tick ~= 1ms.
+uint32_t time_get_ticks(void);
+
 #ifdef __cplusplus
 }
 #endif

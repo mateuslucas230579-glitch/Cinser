@@ -30,6 +30,12 @@ void console_set_color(uint8_t fg, uint8_t bg);
 void console_putc(char c);
 void console_write(const char* str);
 
+// Extras (usado por splash/shell): dimensões e cursor em células de texto
+int console_get_cols(void);
+int console_get_rows(void);
+void console_set_cursor(int col, int row);
+void console_get_cursor(int* col, int* row);
+
 // MACROS DE COMPATIBILIDADE
 // Isso faz seu código antigo que chama 'vga_write' chamar 'console_write'
 #define vga_init()        console_init()

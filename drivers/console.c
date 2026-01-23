@@ -1,21 +1,20 @@
 #include "video.h"
 #include "font.h"
 #include <stdint.h>
+#include <stddef.h>
+
+static void console_recompute_dims(void);
 
 // ---------------------------------------------------------------------------
-// Runtime font copy
-//
-// Em alguns caminhos de boot/driver (principalmente com framebuffer/VESA),
-// qualquer escrita fora do framebuffer pode acabar corrompendo regioes do kernel
-// onde a fonte fica armazenada (tipicamente em .rodata). O sintoma observado foi
-// "apenas letras minusculas" aparecerem deslocadas (ex: 'x' virando 'y'),
-// enquanto numeros/maiusculas permanecem corretos.
-//
-// Para deixar o console resiliente (e manter a arquitetura de video modular),
-// fazemos uma copia da fonte na inicializacao e renderizamos sempre a partir
-// dessa copia.
+// Console baseado em framebuffer (VESA) com fonte 8x8 + espaçamento vertical.
+// Agora com:
+//  - buffer de caracteres (para scroll consistente)
+//  - scroll quando a tela enche
+//  - backspace que apaga na tela (além de mover o cursor)
+//  - compatível com qualquer driver de vídeo (usa apenas put_pixel/clear_screen/fill_rect)
 // ---------------------------------------------------------------------------
 
+// Runtime font copy (protege contra corrupção de .rodata em certos caminhos)
 static uint8_t g_font_runtime[128][8];
 static int g_font_ready = 0;
 
@@ -33,109 +32,266 @@ static void font_runtime_init(void) {
 static uint32_t fg_color = 0xFFFFFFFF;
 static uint32_t bg_color = 0xFF000000;
 
-// Posição do cursor simulado
-static int cursor_x = 0;
-static int cursor_y = 0;
+// Métricas do "terminal"
+#define GLYPH_W 8
+#define GLYPH_H 8
+#define LINE_H  10   // 8px de glyph + 2px de espaçamento
 
-// Paleta VGA básica mapeada para RGB (para compatibilidade com vga_set_color)
-static uint32_t vga_palette[16] = {
-    0xFF000000, // 0 Black
-    0xFF0000AA, // 1 Blue
-    0xFF00AA00, // 2 Green
-    0xFF00AAAA, // 3 Cyan
-    0xFFAA0000, // 4 Red
-    0xFFAA00AA, // 5 Magenta
-    0xFFAA5500, // 6 Brown
-    0xFFAAAAAA, // 7 Light Gray
-    0xFF555555, // 8 Dark Gray
-    0xFF5555FF, // 9 Light Blue
-    0xFF55FF55, // 10 Light Green
-    0xFF55FFFF, // 11 Light Cyan
-    0xFFFF5555, // 12 Light Red
-    0xFFFF55FF, // 13 Light Magenta
-    0xFFFFFF55, // 14 Yellow
-    0xFFFFFFFF  // 15 White
-};
+// Limites estáticos seguros (resoluções comuns: 320..1920)
+#define CONSOLE_MAX_COLS 200
+#define CONSOLE_MAX_ROWS 120
 
-// Limpa a tela com a cor de fundo atual
-void console_clear() {
-    if (!g_video_driver) return;
-    g_video_driver->clear_screen(bg_color);
-    cursor_x = 0;
-    cursor_y = 0;
+static int g_cols = 0;
+static int g_rows = 0;
+
+// Cursor em células (não em pixels)
+static int g_cur_col = 0;
+static int g_cur_row = 0;
+
+// Buffer de células (char + cores) para permitir scroll/redraw
+typedef struct {
+    char ch;
+    uint32_t fg;
+    uint32_t bg;
+} console_cell_t;
+
+static console_cell_t g_cells[CONSOLE_MAX_ROWS][CONSOLE_MAX_COLS];
+
+static inline int min_i(int a, int b) { return (a < b) ? a : b; }
+
+static void console_recalc_geometry(void) {
+    if (!g_video_driver) { g_cols = g_rows = 0; return; }
+    g_cols = g_video_driver->width / GLYPH_W;
+    g_rows = g_video_driver->height / LINE_H;
+    g_cols = min_i(g_cols, CONSOLE_MAX_COLS);
+    g_rows = min_i(g_rows, CONSOLE_MAX_ROWS);
+    if (g_cols < 1) g_cols = 1;
+    if (g_rows < 1) g_rows = 1;
+    if (g_cur_col >= g_cols) g_cur_col = g_cols - 1;
+    if (g_cur_row >= g_rows) g_cur_row = g_rows - 1;
 }
 
-// Configura cores (compatível com o jeito VGA)
-void console_set_color(uint8_t fg, uint8_t bg) {
-    fg_color = vga_palette[fg & 0xF];
-    bg_color = vga_palette[bg & 0xF];
+static void console_recompute_dims(void) {
+    console_recalc_geometry();
 }
 
-// Desenha um caractere na posição atual
-void console_putc(char c) {
-    if (!g_video_driver) return;
+static void console_clear_cells(void) {
+    for (int y = 0; y < CONSOLE_MAX_ROWS; y++) {
+        for (int x = 0; x < CONSOLE_MAX_COLS; x++) {
+            g_cells[y][x].ch = ' ';
+            g_cells[y][x].fg = fg_color;
+            g_cells[y][x].bg = bg_color;
+        }
+    }
+}
 
-    // Garante que a fonte em runtime esteja pronta (copia da .rodata).
+static void console_fill_bg(void) {
+    if (!g_video_driver) return;
+    if (g_video_driver->clear_screen) {
+        g_video_driver->clear_screen(bg_color);
+        return;
+    }
+    // fallback
+    if (g_video_driver->fill_rect) {
+        g_video_driver->fill_rect(0, 0, g_video_driver->width, g_video_driver->height, bg_color);
+        return;
+    }
+    draw_rect(0, 0, g_video_driver->width, g_video_driver->height, bg_color);
+}
+
+static void draw_glyph_at(int col, int row, char c, uint32_t fg, uint32_t bg) {
+    if (!g_video_driver) return;
     font_runtime_init();
 
-    // Tratamento de Newline
-    if (c == '\n') {
-        cursor_x = 0;
-        cursor_y += 10; // 8 pixels da fonte + 2 de espaçamento
-        return;
-    }
+    int x0 = col * GLYPH_W;
+    int y0 = row * LINE_H;
 
-    if (c == '\r') {
-        cursor_x = 0;
-        return;
-    }
-
-    // Desenha o caractere pixel por pixel
-    // Se o char for fora da tabela, desenha espaço
     int glyph_index = (unsigned char)c;
     if (glyph_index > 127) glyph_index = 32;
 
-    // Garante que a fonte runtime esteja carregada
-    if (!g_font_ready) font_runtime_init();
     const uint8_t* glyph = g_font_runtime[glyph_index];
 
-    for (int y = 0; y < 8; y++) {
-        for (int x = 0; x < 8; x++) {
-            // O bit mais à esquerda é o bit 7
-            // Se bit ativo, desenha Foreground, senão Background
-            int px = cursor_x + x;
-            int py = cursor_y + y;
-
-            // Evita escrita fora da tela (protege contra corrupção de memória)
-            if (px < 0 || py < 0 || px >= g_video_driver->width || py >= g_video_driver->height) {
-                continue;
-            }
-
-            if ((glyph[y] >> (7 - x)) & 1) {
-                put_pixel(px, py, fg_color);
-            } else {
-                put_pixel(px, py, bg_color);
+    // Desenha o caractere pixel por pixel (8x8), e limpa o fundo na célula
+    // Primeiro o fundo do retângulo da célula
+    if (g_video_driver->fill_rect) {
+        g_video_driver->fill_rect(x0, y0, GLYPH_W, LINE_H, bg_color);
+    } else {
+        for (int y = 0; y < LINE_H; y++) {
+            for (int x = 0; x < GLYPH_W; x++) {
+                int px = x0 + x;
+                int py = y0 + y;
+                if (px < 0 || py < 0 || px >= g_video_driver->width || py >= g_video_driver->height) continue;
+                put_pixel(px, py, bg);
             }
         }
     }
 
-    // Avança cursor
-    cursor_x += 8;
-    
-    // Wrap-around (quebra de linha automática)
-    if (cursor_x >= g_video_driver->width) {
-        cursor_x = 0;
-        cursor_y += 10;
+    for (int y = 0; y < GLYPH_H; y++) {
+        uint8_t rowbits = glyph[y];
+        for (int x = 0; x < GLYPH_W; x++) {
+            int px = x0 + x;
+            int py = y0 + y;
+            if (px < 0 || py < 0 || px >= g_video_driver->width || py >= g_video_driver->height) continue;
+            if ((rowbits >> (7 - x)) & 1) {
+                put_pixel(px, py, fg);
+            }
+        }
     }
+}
+
+static void console_redraw_all(void) {
+    if (!g_video_driver) return;
+    console_fill_bg();
+    for (int y = 0; y < g_rows; y++) {
+        for (int x = 0; x < g_cols; x++) {
+            draw_glyph_at(x, y, g_cells[y][x].ch, g_cells[y][x].fg, g_cells[y][x].bg);
+        }
+    }
+    if (g_video_driver->update) g_video_driver->update();
+}
+
+static void console_scroll_up(void) {
+    // Move linhas 1..rows-1 para 0..rows-2
+    for (int y = 1; y < g_rows; y++) {
+        for (int x = 0; x < g_cols; x++) {
+            g_cells[y - 1][x] = g_cells[y][x];
+        }
+    }
+    // Limpa a última linha
+    for (int x = 0; x < g_cols; x++) {
+        g_cells[g_rows - 1][x].ch = ' ';
+        g_cells[g_rows - 1][x].fg = fg_color;
+        g_cells[g_rows - 1][x].bg = bg_color;
+    }
+
+    // Redesenha (portável, sem precisar de memcpy de framebuffer)
+    console_redraw_all();
+}
+
+void console_set_color(uint8_t fg, uint8_t bg) {
+    // Paleta VGA básica mapeada para RGB
+    static uint32_t vga_palette[16] = {
+        0xFF000000, // 0 Black
+        0xFF0000AA, // 1 Blue
+        0xFF00AA00, // 2 Green
+        0xFF00AAAA, // 3 Cyan
+        0xFFAA0000, // 4 Red
+        0xFFAA00AA, // 5 Magenta
+        0xFFAA5500, // 6 Brown
+        0xFFAAAAAA, // 7 Light Gray
+        0xFF555555, // 8 Dark Gray
+        0xFF5555FF, // 9 Light Blue
+        0xFF55FF55, // 10 Light Green
+        0xFF55FFFF, // 11 Light Cyan
+        0xFFFF5555, // 12 Light Red
+        0xFFFF55FF, // 13 Light Magenta
+        0xFFFFFF55, // 14 Yellow
+        0xFFFFFFFF  // 15 White
+    };
+
+    fg_color = vga_palette[fg & 0x0F];
+    bg_color = vga_palette[bg & 0x0F];
+}
+
+void console_clear(void) {
+    if (!g_video_driver) return;
+    font_runtime_init();
+    console_recalc_geometry();
+    console_clear_cells();
+    g_cur_col = 0;
+    g_cur_row = 0;
+    console_fill_bg();
+    if (g_video_driver->update) g_video_driver->update();
+}
+
+void console_putc(char c) {
+    if (!g_video_driver) return;
+    font_runtime_init();
+    console_recalc_geometry();
+
+    // Newline
+    if (c == '\n') {
+        g_cur_col = 0;
+        g_cur_row += 1;
+        if (g_cur_row >= g_rows) {
+            g_cur_row = g_rows - 1;
+            console_scroll_up();
+        }
+        return;
+    }
+
+    // Carriage return
+    if (c == '\r') {
+        g_cur_col = 0;
+        return;
+    }
+
+    // Backspace: move cursor one character left (não apaga; apagar é responsabilidade do chamador)
+    if (c == '\b') {
+        if (g_cur_col > 0) {
+            g_cur_col--;
+        } else if (g_cur_row > 0) {
+            g_cur_row--;
+            g_cur_col = g_cols - 1;
+        }
+        return;
+    }
+
+    // Bell: ignore
+    if (c == '\a') return;
+
+    // Sanitiza char
+    unsigned char uc = (unsigned char)c;
+    if (uc < 32 || uc > 127) c = ' ';
+
+    // Escreve no buffer + desenha
+    g_cells[g_cur_row][g_cur_col].ch = c;
+    g_cells[g_cur_row][g_cur_col].fg = fg_color;
+    g_cells[g_cur_row][g_cur_col].bg = bg_color;
+    draw_glyph_at(g_cur_col, g_cur_row, c, fg_color, bg_color);
+
+    // Avança
+    g_cur_col++;
+    if (g_cur_col >= g_cols) {
+        g_cur_col = 0;
+        g_cur_row++;
+        if (g_cur_row >= g_rows) {
+            g_cur_row = g_rows - 1;
+            console_scroll_up();
+        }
+    }
+
+    if (g_video_driver->update) g_video_driver->update();
 }
 
 void console_write(const char* str) {
-    while (*str) {
-        console_putc(*str++);
-    }
+    while (*str) console_putc(*str++);
 }
 
-void console_init() {
+void console_init(void) {
     font_runtime_init();
+    console_recalc_geometry();
+    console_clear_cells();
     console_clear();
+}
+
+// ---------------------------------------------------------------------------
+// Extras: dimensões e cursor (em células de texto)
+// ---------------------------------------------------------------------------
+int console_get_cols(void) { return g_cols; }
+int console_get_rows(void) { return g_rows; }
+
+void console_set_cursor(int col, int row) {
+    console_recompute_dims();
+    if (col < 0) col = 0;
+    if (row < 0) row = 0;
+    if (col >= g_cols) col = g_cols - 1;
+    if (row >= g_rows) row = g_rows - 1;
+    g_cur_col = col;
+    g_cur_row = row;
+}
+
+void console_get_cursor(int* col, int* row) {
+    if (col) *col = g_cur_col;
+    if (row) *row = g_cur_row;
 }
